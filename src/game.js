@@ -717,22 +717,6 @@
       }
     }
 
-    // ---- DOROTHY ARMOR SKIRT (seals the clearance gap to the ground) ----
-    // A 10 cm skirt drops from the body bottom straight to the ground.
-    if (armorImg && armorDeployed) {
-      const skirtGap = (-bodyBottom);              // px from body bottom to ground
-      const drop = skirtGap * armorDrop;           // animate downward
-      // draw the armor sprite stretched to cover from body bottom to ground,
-      // so it perfectly closes the gap (armorCm = 10 -> full seal).
-      if (armorImg._ready) {
-        const skirtH = Math.max(1, drop + 4);
-        ctx.drawImage(armorImg, clipLeft, bodyBottom, clipRight - clipLeft, skirtH);
-      } else {
-        ctx.fillStyle = '#5a3a1a';
-        ctx.fillRect(clipLeft, bodyBottom, clipRight - clipLeft, drop);
-      }
-    }
-
     // ---- BODY (vehicle sprite) ----
     if (bodyImg && bodyImg._ready) {
       ctx.drawImage(bodyImg, bodyLeft, bodyTop, cw, ch);
@@ -740,6 +724,34 @@
       ctx.fillStyle='#3a2422';
       ctx.fillRect(bodyLeft, bodyTop, cw, ch);
     }
+
+    // ---- DOROTHY ARMOR SKIRT (drawn ON TOP so the seal is visible) ----
+    // A LARGE panel: overlaps up onto the lower body and extends down to the
+    // ground, visually connected to the car and fully sealing the gap.
+    if (armorImg && armorDeployed) {
+      const overlap = ch * 0.55;          // how far the armor rides up over the body
+      const gapPx = -bodyBottom;          // body-bottom -> ground distance
+      const armorH = overlap + gapPx;     // full panel height (big)
+      const armorTopFinal = bodyBottom - overlap; // where the panel top ends up
+      // animate: slide the whole panel down into place
+      const slide = (1 - armorDrop) * armorH;
+      const armorTop = armorTopFinal + slide;
+      const armorW = (clipRight - clipLeft) * 1.06; // a touch wider than body inset
+      const armorX = -armorW / 2;
+      ctx.save();
+      // clip so the panel never draws below the ground line
+      ctx.beginPath();
+      ctx.rect(armorX, armorTopFinal - 4, armorW, (0) - (armorTopFinal - 4));
+      ctx.clip();
+      if (armorImg._ready) {
+        ctx.drawImage(armorImg, armorX, armorTop, armorW, armorH);
+      } else {
+        ctx.fillStyle = '#5a3a1a';
+        ctx.fillRect(armorX, armorTop, armorW, armorH);
+      }
+      ctx.restore();
+    }
+
     ctx.restore();
 
     // ground press dust when lowering
