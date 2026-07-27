@@ -726,22 +726,22 @@
     }
 
     // ---- DOROTHY ARMOR SKIRT (drawn ON TOP so the seal is visible) ----
-    // A LARGE panel: overlaps up onto the lower body and extends down to the
-    // ground, visually connected to the car and fully sealing the gap.
+    // A panel that stays WITHIN the car's footprint: never wider than the body,
+    // overlaps only slightly onto the lower body, and reaches down to the ground.
     if (armorImg && armorDeployed) {
-      const overlap = ch * 0.55;          // how far the armor rides up over the body
       const gapPx = -bodyBottom;          // body-bottom -> ground distance
-      const armorH = overlap + gapPx;     // full panel height (big)
+      const overlap = Math.min(ch * 0.22, gapPx * 1.2 + 10); // small overlap onto body
+      const armorH = overlap + gapPx;     // panel height (<= car height)
       const armorTopFinal = bodyBottom - overlap; // where the panel top ends up
       // animate: slide the whole panel down into place
       const slide = (1 - armorDrop) * armorH;
       const armorTop = armorTopFinal + slide;
-      const armorW = (clipRight - clipLeft) * 1.06; // a touch wider than body inset
+      const armorW = (clipRight - clipLeft); // never wider than the car body
       const armorX = -armorW / 2;
       ctx.save();
       // clip so the panel never draws below the ground line
       ctx.beginPath();
-      ctx.rect(armorX, armorTopFinal - 4, armorW, (0) - (armorTopFinal - 4));
+      ctx.rect(armorX, armorTopFinal - 2, armorW, (0) - (armorTopFinal - 2));
       ctx.clip();
       if (armorImg._ready) {
         ctx.drawImage(armorImg, armorX, armorTop, armorW, armorH);
