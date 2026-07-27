@@ -22,8 +22,19 @@ The **Dominator 1** is rated to survive up to **EF2**. Anything stronger
 overpowers the anchors and flings the vehicle using the physics engine.
 
 ### Buy Interceptors
-The shop lists stronger vehicles (Dominator 2/3, TITUS, TIV 2, Apex Hunter).
-They're placeholders / "coming soon" for now.
+Survive tornadoes to earn **coins** — the stronger the storm, the bigger the
+payout. Spend coins in the shop on new vehicles (progress is saved in your
+browser):
+
+- **Dorothy** — 1000 coins (cheapest). Twister-style deployment pod: on SPACE it
+  slams its **armor shell** (`dorothyArmor.png`) to the ground, but the pod body
+  itself does **not** squat. Survives up to EF3.
+- Dominator 2/3, TIV 2, Apex Hunter — stronger, pricier.
+
+The **Dominator 1** (starter) hunkers its whole body onto its wheels.
+
+> The sprites in `assets/` (`dominator1.png`, `dorothy.png`, `dorothyArmor.png`)
+> are **placeholders** — replace them with your own PNGs (same filenames).
 
 ## Tech
 

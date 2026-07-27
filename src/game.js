@@ -20,16 +20,56 @@
     { id:'EF5P', name:'EF5+', wind:260, color:[105,102,145], power:4.0, r:[120,320], h:660, desc:'Beyond the scale. Ground scoured to bedrock.' },
     { id:'EF6', name:'Hypothetical EF6', wind:320, color:[92,80,150],  power:5.5,  r:[140,360], h:700, multi:true, desc:'Theoretical monster. Nothing survives.' },
   ];
-  const SURVIVABLE_INDEX = 2; // Dominator 1 survives up to EF2 (index 2)
+  const SURVIVABLE_INDEX = 2; // (legacy) Dominator 1 survives up to EF2 (index 2)
 
+  // helper: EF label -> storm index
+  const EF_INDEX = {};
+  STORMS.forEach((s,i)=>{ EF_INDEX[s.name]=i; });
+
+  // ---- Interceptors (buyable). surviveIdx = highest storm index survived.
+  //  crouches: body squats onto its wheels on deploy (Dominator style)
+  //  armorSprite: swap to this sprite when deployed (Dorothy style)
+  //  wheels: draw the two code-drawn wheels
   const INTERCEPTORS = [
-    { id:'dom1', name:'Dominator 1', owned:true,  price:0,    survive:'EF2', note:'Reed-Timmer-style TIV. Low-slung armored hull.' },
-    { id:'dom2', name:'Dominator 2', owned:false, price:1200, survive:'EF3', note:'Reinforced chassis. Deeper spikes.' },
-    { id:'dom3', name:'Dominator 3', owned:false, price:3500, survive:'EF4', note:'Aero flaps push it into the ground.' },
-    { id:'titus', name:'TITUS',      owned:false, price:6000, survive:'EF4', note:'Armored military-grade intercept truck.' },
-    { id:'tiv2', name:'TIV 2',       owned:false, price:9000, survive:'EF5', note:'Hydraulic claws. Bulletproof glass.' },
-    { id:'apex', name:'Apex Hunter', owned:false, price:20000,survive:'EF5+',note:'Prototype. Magnetic ground lock.' },
+    { id:'dom1', name:'Dominator 1', owned:true,  price:0,    survive:'EF2',
+      sprite:'assets/dominator1.png', crouches:true, wheels:true,
+      note:'Reed-Timmer-style TIV. Low-slung armored hull. Hunkers onto its wheels.' },
+    { id:'dorothy', name:'Dorothy', owned:false, price:1000, survive:'EF3',
+      sprite:'assets/dorothy.png', armorSprite:'assets/dorothyArmor.png', crouches:false, wheels:false,
+      note:'Twister-style deployment pod. Slams its armor shell to the ground — the pod itself does not squat.' },
+    { id:'dom2', name:'Dominator 2', owned:false, price:2500, survive:'EF3',
+      sprite:'assets/dominator1.png', crouches:true, wheels:true,
+      note:'Reinforced chassis. Deeper stance.' },
+    { id:'dom3', name:'Dominator 3', owned:false, price:4500, survive:'EF4',
+      sprite:'assets/dominator1.png', crouches:true, wheels:true,
+      note:'Aero flaps push it into the ground.' },
+    { id:'tiv2', name:'TIV 2',       owned:false, price:9000, survive:'EF5',
+      sprite:'assets/dominator1.png', crouches:true, wheels:true,
+      note:'Hydraulic claws. Bulletproof glass.' },
+    { id:'apex', name:'Apex Hunter', owned:false, price:20000,survive:'EF5+',
+      sprite:'assets/dominator1.png', crouches:true, wheels:true,
+      note:'Prototype. Magnetic ground lock.' },
   ];
+
+  // ---- Economy / save state ----
+  const SAVE_KEY = 'midnight_chasers_save_v1';
+  let coins = 0;
+  let owned = { dom1:true };
+  let selectedId = 'dom1';
+  function loadSave(){
+    try {
+      const s = JSON.parse(localStorage.getItem(SAVE_KEY));
+      if (s){ coins=s.coins||0; owned=Object.assign({dom1:true}, s.owned||{}); selectedId=s.selectedId||'dom1'; }
+    } catch(e){}
+    if (!owned[selectedId]) selectedId='dom1';
+  }
+  function saveGame(){
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify({coins, owned, selectedId})); } catch(e){}
+  }
+  function getVehicle(id){ return INTERCEPTORS.find(v=>v.id===id); }
+  function activeVehicle(){ return getVehicle(selectedId); }
+  // reward: stronger tornado -> more coins
+  function stormReward(idx){ return 100 + idx*140; }
 
   // ---- DOM refs ----
   const screens = {
@@ -40,12 +80,22 @@
   };
   const hud = document.getElementById('hud');
   const prompt = document.getElementById('prompt');
+  const coinBar = document.getElementById('coinBar');
 
-  // ---- assets ----
-  const carImg = new Image();
-  carImg.src = 'assets/dominator1.png';
-  let carReady = false;
-  carImg.onload = () => { carReady = true; };
+  function refreshCoins(){ document.getElementById('coinAmt').textContent = coins.toLocaleString(); }
+
+  // ---- assets: one Image per unique sprite path ----
+  const imgCache = {};
+  function getImg(path){
+    if (!imgCache[path]){
+      const im = new Image(); im.src = path; im._ready=false;
+      im.onload=()=>{ im._ready=true; };
+      imgCache[path]=im;
+    }
+    return imgCache[path];
+  }
+  // preload all vehicle sprites
+  INTERCEPTORS.forEach(v=>{ getImg(v.sprite); if(v.armorSprite) getImg(v.armorSprite); });
 
   // ============================================================
   //  Game state machine
@@ -79,6 +129,9 @@
   let tornadoWorldX = W + 400; // starts off right, approaches car
   let stateTime = 0;
   let outcome = null;
+  let runVeh = null;        // vehicle used for the current run
+  let runSurviveIdx = 2;    // highest storm index this run's vehicle survives
+  let armorDeployed = false; // Dorothy-style armor shell dropped
 
   // ============================================================
   //  Screen helpers
@@ -88,13 +141,19 @@
     hud.classList.add('hidden');
     prompt.classList.add('hidden');
     if (screens[name]) screens[name].classList.remove('hidden');
+    // coin balance visible on menu-type screens
+    const onMenu = (name==='menu'||name==='select'||name==='shop'||name==='result');
+    coinBar.classList.toggle('hidden', !onMenu);
+    if (onMenu) refreshCoins();
   }
 
   function buildSelect() {
+    const veh = activeVehicle();
+    const surviveIdx = EF_INDEX[veh.survive];
     const grid = document.getElementById('efGrid');
     grid.innerHTML = '';
     STORMS.forEach((s, i) => {
-      const survives = i <= SURVIVABLE_INDEX;
+      const survives = i <= surviveIdx;
       const pct = Math.min(100, (s.wind / 320) * 100);
       const barColor = i <= 2 ? '#4dffa1' : i <= 5 ? '#ffd24d' : '#ff5470';
       const card = document.createElement('div');
@@ -104,26 +163,63 @@
         <div class="ef-name">${s.name}</div>
         <div class="ef-wind">${s.wind} mph winds</div>
         <div class="ef-desc">${s.desc}</div>
+        <div style="font-size:12px;color:#ffe6a0;margin-top:6px">🪙 +${stormReward(i)} on survive</div>
         <div class="ef-bar"><i style="width:${pct}%;background:${barColor}"></i></div>`;
       card.onclick = () => startRun(i);
       grid.appendChild(card);
     });
+
+    // active vehicle info + owned-vehicle picker
+    const ownedVehs = INTERCEPTORS.filter(v=>owned[v.id]);
+    const chips = ownedVehs.map(v=>`
+      <div class="veh-chip ${v.id===selectedId?'active':''}" data-veh="${v.id}">
+        ${v.name}<small>up to ${v.survive}</small>
+      </div>`).join('');
+    document.getElementById('activeInfo').innerHTML = `
+      <span class="tag">ACTIVE INTERCEPTOR</span>
+      <b>${veh.name}</b> — survives up to <span class="good">${veh.survive}</span>. Stronger storms rip it away.
+      <div class="vehsel">${chips}</div>`;
+    document.querySelectorAll('.veh-chip').forEach(ch=>{
+      ch.onclick = ()=>{ selectedId = ch.dataset.veh; saveGame(); buildSelect(); };
+    });
   }
 
   function buildShop() {
+    refreshCoins();
     const grid = document.getElementById('shopGrid');
     grid.innerHTML = '';
     INTERCEPTORS.forEach(c => {
+      const isOwned = !!owned[c.id];
+      const canAfford = coins >= c.price;
       const card = document.createElement('div');
       card.className = 'shop-card';
+      let btn;
+      if (isOwned) btn = `<button class="buy owned" disabled>✓ OWNED</button>`;
+      else btn = `<button class="buy" data-buy="${c.id}" ${canAfford?'':'disabled'}>
+                    ${canAfford ? 'BUY' : 'NOT ENOUGH'} 🪙 ${c.price.toLocaleString()}
+                  </button>`;
       card.innerHTML = `
         <h3>${c.name}</h3>
         <small>Survives up to <b style="color:#4dffa1">${c.survive}</b></small>
         <p style="margin-top:8px;color:#b9c0e6;font-size:13px">${c.note}</p>
-        <div class="price">${c.price === 0 ? 'OWNED' : '$' + c.price.toLocaleString()}</div>
-        ${c.owned ? '' : '<div class="locked">🔒 COMING SOON</div>'}`;
+        <div class="price">${c.price === 0 ? 'STARTER' : '🪙 ' + c.price.toLocaleString()}</div>
+        ${btn}`;
       grid.appendChild(card);
     });
+    document.querySelectorAll('[data-buy]').forEach(b=>{
+      b.onclick = ()=> buyVehicle(b.dataset.buy);
+    });
+  }
+
+  function buyVehicle(id){
+    const v = getVehicle(id);
+    if (!v || owned[id] || coins < v.price) return;
+    coins -= v.price;
+    owned[id] = true;
+    selectedId = id;      // auto-equip the new interceptor
+    saveGame();
+    refreshCoins();
+    buildShop();
   }
 
   // ============================================================
@@ -133,6 +229,8 @@
     storm = STORMS[stormIndex];
     storm._index = stormIndex;
     outcome = null;
+    runVeh = activeVehicle();
+    runSurviveIdx = EF_INDEX[runVeh.survive];
 
     // physics
     world = new Phys.World({ gravity: 2200, groundY: GROUND_Y });
@@ -146,6 +244,7 @@
     carTilt = 0;
     crouch = 0;
     wheelSpin = 0;
+    armorDeployed = false;
     cameraShake = 0;
     tornadoWorldX = W + 500;
     stateTime = 0;
@@ -231,7 +330,10 @@
     state = S.ANCHORED;
     stateTime = 0;
     car.anchored = true;             // pinned to the ground
-    document.getElementById('hudPhase').textContent = 'Hunkered down — bracing for impact!';
+    if (runVeh.armorSprite) armorDeployed = true; // Dorothy drops its armor shell
+    const msg = runVeh.crouches ? 'Hunkered down — bracing for impact!'
+                                : 'Armor deployed — bracing for impact!';
+    document.getElementById('hudPhase').textContent = msg;
     prompt.classList.add('hidden');
   }
 
@@ -259,7 +361,9 @@
       if (carX >= carTargetX) {
         carX = carTargetX;
         state = S.WAIT;
-        document.getElementById('hudPhase').textContent = 'In position. Press SPACE to hunker down!';
+        const msg = runVeh.crouches ? 'In position. Press SPACE to hunker down!'
+                                    : 'In position. Press SPACE to deploy armor!';
+        document.getElementById('hudPhase').textContent = msg;
         prompt.classList.remove('hidden');
       }
       car.position.x = carX;
@@ -272,7 +376,8 @@
       stateTime += dt;
       carTilt = Math.max(0, carTilt - dt * 0.8);
       // car presses down to the ground (crouch / squat on suspension)
-      crouch = Math.min(1, crouch + dt * 3);
+      // only crouching vehicles (Dominator) squat; Dorothy's pod stays put.
+      if (runVeh.crouches) crouch = Math.min(1, crouch + dt * 3);
 
       // tornado approaches the car
       const approachSpeed = 120 + storm._index * 22;
@@ -327,7 +432,7 @@
   function resolveImpact() {
     if (impactResolved) return;
     impactResolved = true;
-    const survivable = storm._index <= SURVIVABLE_INDEX;
+    const survivable = storm._index <= runSurviveIdx;
     cameraShake = 14 + storm._index * 3;
     if (survivable) {
       // anchors hold — car survives, small rattle
@@ -399,14 +504,25 @@
     outcome = survived;
     const title = document.getElementById('resTitle');
     const text = document.getElementById('resText');
+    const rewardEl = document.getElementById('reward');
+    const nm = runVeh.name;
     if (survived) {
       title.textContent = 'SURVIVED';
       title.className = 'win';
-      text.innerHTML = `The Dominator 1 pressed down and held its ground through the <b>${storm.name}</b> (${storm.wind} mph). Low profile, low drag.`;
+      const action = runVeh.crouches ? 'pressed down and held its ground'
+                                     : 'slammed its armor to the ground and held';
+      text.innerHTML = `The ${nm} ${action} through the <b>${storm.name}</b> (${storm.wind} mph). Stronger storms pay more.`;
+      // award coins — bigger storm = more coins
+      const gain = stormReward(storm._index);
+      coins += gain;
+      saveGame();
+      rewardEl.textContent = `🪙 +${gain} coins`;
+      rewardEl.classList.remove('hidden');
     } else {
       title.textContent = 'INTERCEPTOR LOST';
       title.className = 'lose';
-      text.innerHTML = `The <b>${storm.name}</b> (${storm.wind} mph) overpowered the Dominator 1 and threw it. It only rates for <b>EF2</b> — you need a stronger interceptor.`;
+      text.innerHTML = `The <b>${storm.name}</b> (${storm.wind} mph) overpowered the ${nm} and threw it. It only rates for <b>${runVeh.survive}</b> — you need a stronger interceptor.`;
+      rewardEl.classList.add('hidden');
     }
     setTimeout(()=>show('result'), 200);
     impactResolved = false;
@@ -555,34 +671,54 @@
     // when crouched, suspension compresses: wheels stay on ground, body drops.
     const bodyDY = crouch * CROUCH_DROP * -0.15; // tiny extra squat feel
 
+    // which sprite to draw: swap to armor shell for vehicles like Dorothy
+    const spritePath = (armorDeployed && runVeh.armorSprite) ? runVeh.armorSprite : runVeh.sprite;
+    const bodyImg = getImg(spritePath);
+
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(ang);
 
-    // ---- WHEELS (behind the body) ----
-    // wheels stay planted on the ground; when crouching the body drops onto them
-    const wheelY = flung ? axleY : (axleY - crouch * CROUCH_DROP);
-    for (const wx of [-wheelDX, wheelDX]) {
-      drawWheel(wx, wheelY, wheelR, wheelSpin);
+    // ---- WHEELS (behind the body) — only vehicles that have them ----
+    if (runVeh.wheels) {
+      // wheels stay planted on the ground; when crouching the body drops onto them
+      const wheelY = flung ? axleY : (axleY - crouch * CROUCH_DROP);
+      for (const wx of [-wheelDX, wheelDX]) {
+        drawWheel(wx, wheelY, wheelR, wheelSpin);
+      }
     }
 
-    // ---- BODY (car sprite) ----
-    if (carReady) {
-      ctx.drawImage(carImg, -cw/2, -ch/2 + bodyDY, cw, ch);
+    // ---- BODY (vehicle sprite) ----
+    if (bodyImg && bodyImg._ready) {
+      ctx.drawImage(bodyImg, -cw/2, -ch/2 + bodyDY, cw, ch);
     } else {
       ctx.fillStyle='#3a2422';
       ctx.fillRect(-cw/2,-ch/2 + bodyDY,cw,ch);
     }
     ctx.restore();
 
-    // ground press dust when hunkering down
-    if (crouch > 0.05 && crouch < 1 && car.anchored) {
+    // ground press dust when hunkering down (crouching vehicles only)
+    if (runVeh.crouches && crouch > 0.05 && crouch < 1 && car.anchored) {
       ctx.save();
       ctx.globalAlpha = 0.3 * (1 - crouch);
       ctx.fillStyle = '#b7a98a';
       for (const wx of [-wheelDX, wheelDX]) {
         ctx.beginPath();
         ctx.arc(cx + wx, GROUND_Y - 4, 10 + crouch*14, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // dust burst when Dorothy's armor slams down
+    if (!runVeh.crouches && armorDeployed && stateTime < 0.6 && car.anchored) {
+      ctx.save();
+      ctx.globalAlpha = 0.35 * (1 - stateTime/0.6);
+      ctx.fillStyle = '#b7a98a';
+      for (let i=0;i<8;i++){
+        const dx = cx + (Math.random()-0.5)*220;
+        ctx.beginPath();
+        ctx.arc(dx, GROUND_Y - 4 - Math.random()*20, 8+Math.random()*16, 0, Math.PI*2);
         ctx.fill();
       }
       ctx.restore();
@@ -629,6 +765,8 @@
   }
 
   // ---- boot ----
+  loadSave();
+  refreshCoins();
   show('menu');
   requestAnimationFrame(loop);
 })();
