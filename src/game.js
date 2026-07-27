@@ -23,7 +23,7 @@
   const SURVIVABLE_INDEX = 2; // Dominator 1 survives up to EF2 (index 2)
 
   const INTERCEPTORS = [
-    { id:'dom1', name:'Dominator 1', owned:true,  price:0,    survive:'EF2', note:'Reed-Timmer-style TIV. Twin hydraulic anchors.' },
+    { id:'dom1', name:'Dominator 1', owned:true,  price:0,    survive:'EF2', note:'Reed-Timmer-style TIV. Low-slung armored hull.' },
     { id:'dom2', name:'Dominator 2', owned:false, price:1200, survive:'EF3', note:'Reinforced chassis. Deeper spikes.' },
     { id:'dom3', name:'Dominator 3', owned:false, price:3500, survive:'EF4', note:'Aero flaps push it into the ground.' },
     { id:'titus', name:'TITUS',      owned:false, price:6000, survive:'EF4', note:'Armored military-grade intercept truck.' },
@@ -73,7 +73,8 @@
   let carTilt = 0;         // wheelie tilt (2-wheel driving)
   let carX = -260;
   let carTargetX = W * 0.5;
-  let anchorProgress = 0;  // spikes descending
+  let crouch = 0;          // 0 = normal ride height, 1 = pressed to the ground
+  let wheelSpin = 0;       // rotation of the wheels
   let cameraShake = 0;
   let tornadoWorldX = W + 400; // starts off right, approaches car
   let stateTime = 0;
@@ -143,7 +144,8 @@
 
     carX = -260;
     carTilt = 0;
-    anchorProgress = 0;
+    crouch = 0;
+    wheelSpin = 0;
     cameraShake = 0;
     tornadoWorldX = W + 500;
     stateTime = 0;
@@ -228,8 +230,8 @@
   function deployAnchors() {
     state = S.ANCHORED;
     stateTime = 0;
-    car.anchored = true;             // pinned while spikes hold
-    document.getElementById('hudPhase').textContent = 'Anchors deployed — bracing for impact!';
+    car.anchored = true;             // pinned to the ground
+    document.getElementById('hudPhase').textContent = 'Hunkered down — bracing for impact!';
     prompt.classList.add('hidden');
   }
 
@@ -251,12 +253,13 @@
       // drive in on 2 wheels (wheelie): accelerate then arrive
       const speed = 520;
       carX += speed * dt;
+      wheelSpin += (speed / 45) * dt;
       // wheelie tilt rises then holds
       carTilt = Math.min(0.28, carTilt + dt * 0.6);
       if (carX >= carTargetX) {
         carX = carTargetX;
         state = S.WAIT;
-        document.getElementById('hudPhase').textContent = 'In position. Deploy anchors!';
+        document.getElementById('hudPhase').textContent = 'In position. Press SPACE to hunker down!';
         prompt.classList.remove('hidden');
       }
       car.position.x = carX;
@@ -268,8 +271,8 @@
     else if (state === S.ANCHORED) {
       stateTime += dt;
       carTilt = Math.max(0, carTilt - dt * 0.8);
-      // spikes descend
-      anchorProgress = Math.min(1, anchorProgress + dt * 2);
+      // car presses down to the ground (crouch / squat on suspension)
+      crouch = Math.min(1, crouch + dt * 3);
 
       // tornado approaches the car
       const approachSpeed = 120 + storm._index * 22;
@@ -339,7 +342,7 @@
       car.applyImpulse(side * car.mass, up * car.mass);
       car.applyTorque(-(6 + overpower * 5) * car.mass, 0.016);
       car.angularVelocity = -(3 + overpower * 2.2);
-      document.getElementById('hudPhase').textContent = 'ANCHORS FAILED!';
+      document.getElementById('hudPhase').textContent = 'HULL RIPPED LOOSE!';
     }
   }
 
@@ -399,11 +402,11 @@
     if (survived) {
       title.textContent = 'SURVIVED';
       title.className = 'win';
-      text.innerHTML = `The Dominator 1 held its ground through the <b>${storm.name}</b> (${storm.wind} mph). The hydraulic anchors did their job.`;
+      text.innerHTML = `The Dominator 1 pressed down and held its ground through the <b>${storm.name}</b> (${storm.wind} mph). Low profile, low drag.`;
     } else {
       title.textContent = 'INTERCEPTOR LOST';
       title.className = 'lose';
-      text.innerHTML = `The <b>${storm.name}</b> (${storm.wind} mph) overpowered the anchors and threw the Dominator 1. It only rates for <b>EF2</b> — you need a stronger interceptor.`;
+      text.innerHTML = `The <b>${storm.name}</b> (${storm.wind} mph) overpowered the Dominator 1 and threw it. It only rates for <b>EF2</b> — you need a stronger interceptor.`;
     }
     setTimeout(()=>show('result'), 200);
     impactResolved = false;
@@ -529,46 +532,61 @@
 
   function drawCar() {
     if (state===S.MENU||state===S.SELECT||state===S.SHOP) return;
+
+    // ride-height metrics
+    const RIDE = 55;          // normal center height above ground line
+    const CROUCH_DROP = 30;   // how much lower the body sits when hunkered down
     const cx = carX;
-    let cy = GROUND_Y - 55;
+    let cy = GROUND_Y - RIDE + crouch * CROUCH_DROP;
     let ang = -carTilt; // wheelie tilts nose up
+    let flung = false;
 
     if (!car.anchored && state!==S.WAIT && state!==S.APPROACH) {
       cy = car.position.y;
       ang = car.angle;
+      flung = true;
     }
+
+    const cw = 240, ch = 130;
+    // wheel geometry (drawn in code — NOT a PNG)
+    const wheelR = 26;
+    const wheelDX = 74;                 // horizontal offset of each wheel from center
+    const axleY = ch/2 - 36;            // wheel axle height within the body space
+    // when crouched, suspension compresses: wheels stay on ground, body drops.
+    const bodyDY = crouch * CROUCH_DROP * -0.15; // tiny extra squat feel
 
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(ang);
 
-    const cw = 240, ch = 130;
+    // ---- WHEELS (behind the body) ----
+    // wheels stay planted on the ground; when crouching the body drops onto them
+    const wheelY = flung ? axleY : (axleY - crouch * CROUCH_DROP);
+    for (const wx of [-wheelDX, wheelDX]) {
+      drawWheel(wx, wheelY, wheelR, wheelSpin);
+    }
 
-    // anchor spikes (when deploying/anchored)
-    if (anchorProgress > 0 && car.anchored) {
+    // ---- BODY (car sprite) ----
+    if (carReady) {
+      ctx.drawImage(carImg, -cw/2, -ch/2 + bodyDY, cw, ch);
+    } else {
+      ctx.fillStyle='#3a2422';
+      ctx.fillRect(-cw/2,-ch/2 + bodyDY,cw,ch);
+    }
+    ctx.restore();
+
+    // ground press dust when hunkering down
+    if (crouch > 0.05 && crouch < 1 && car.anchored) {
       ctx.save();
-      ctx.strokeStyle = '#c9ccd6'; ctx.lineWidth = 6; ctx.lineCap='round';
-      const drop = anchorProgress * 46;
-      for (const sx of [-70, 70]) {
+      ctx.globalAlpha = 0.3 * (1 - crouch);
+      ctx.fillStyle = '#b7a98a';
+      for (const wx of [-wheelDX, wheelDX]) {
         ctx.beginPath();
-        ctx.moveTo(sx, 40);
-        ctx.lineTo(sx, 40 + drop);
-        ctx.stroke();
-        // spike tip
-        ctx.fillStyle='#e6e9f2';
-        ctx.beginPath();
-        ctx.moveTo(sx-6,40+drop); ctx.lineTo(sx+6,40+drop); ctx.lineTo(sx,40+drop+10); ctx.closePath(); ctx.fill();
+        ctx.arc(cx + wx, GROUND_Y - 4, 10 + crouch*14, 0, Math.PI*2);
+        ctx.fill();
       }
       ctx.restore();
     }
-
-    if (carReady) {
-      ctx.drawImage(carImg, -cw/2, -ch/2, cw, ch);
-    } else {
-      ctx.fillStyle='#26304f';
-      ctx.fillRect(-cw/2,-ch/2,cw,ch);
-    }
-    ctx.restore();
 
     // dust under wheels while driving in
     if (state===S.APPROACH) {
@@ -580,6 +598,34 @@
       }
       ctx.restore();
     }
+  }
+
+  // Draw a single wheel procedurally (tire + rim + spokes)
+  function drawWheel(x, y, r, spin) {
+    ctx.save();
+    ctx.translate(x, y);
+    // tire
+    ctx.fillStyle = '#141414';
+    ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fill();
+    // tread ring
+    ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(0,0,r-3,0,Math.PI*2); ctx.stroke();
+    // rim
+    ctx.rotate(spin);
+    ctx.fillStyle = '#8a8f98';
+    ctx.beginPath(); ctx.arc(0,0,r*0.55,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#c9ccd6';
+    ctx.beginPath(); ctx.arc(0,0,r*0.22,0,Math.PI*2); ctx.fill();
+    // spokes
+    ctx.strokeStyle = '#5a5f68'; ctx.lineWidth = 3;
+    for (let i=0;i<5;i++){
+      const a = (i/5)*Math.PI*2;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a)*r*0.2, Math.sin(a)*r*0.2);
+      ctx.lineTo(Math.cos(a)*r*0.5, Math.sin(a)*r*0.5);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // ---- boot ----
