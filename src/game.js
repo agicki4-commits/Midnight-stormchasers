@@ -697,20 +697,24 @@
     const clipRight = -bodyLeft - inset;
 
     // ---- WHEELS (drawn in code, NOT a PNG) ----
-    // Small wheels that bridge body-to-ground; clipped to the car's footprint
-    // so nothing pokes out beyond or behind the body.
+    // Fixed-size wheels. They sit on the ground; the BODY drops down over them.
+    // We only draw the part of each wheel that shows in the gap under the body,
+    // so as the car presses to the ground the wheels tuck away (they do NOT shrink).
     if (runVeh.wheels) {
-      const wheelR = Math.min(22, clearPx + 12);   // never bigger than the car
-      const wheelDX = cw * 0.24;                    // inside the body width
-      ctx.save();
-      // clip to the body footprint (horizontally within car, above ground)
-      ctx.beginPath();
-      ctx.rect(clipLeft, bodyTop + 8, clipRight - clipLeft, -(bodyTop + 8) + 2);
-      ctx.clip();
-      for (const wx of [-wheelDX, wheelDX]) {
-        drawWheel(wx, -wheelR, wheelR, wheelSpin);
+      const wheelR = 20;                 // FIXED radius — never changes
+      const wheelDX = cw * 0.26;         // inside the body width
+      const gapTop = bodyBottom;         // top of the visible under-body gap (<=0)
+      if (gapTop < -0.5) {               // only if there is a gap to show wheels in
+        ctx.save();
+        // clip to the gap between the body's bottom edge and the ground line
+        ctx.beginPath();
+        ctx.rect(clipLeft, gapTop, clipRight - clipLeft, -gapTop);
+        ctx.clip();
+        for (const wx of [-wheelDX, wheelDX]) {
+          drawWheel(wx, -wheelR, wheelR, wheelSpin); // bottom of wheel on ground
+        }
+        ctx.restore();
       }
-      ctx.restore();
     }
 
     // ---- DOROTHY ARMOR SKIRT (seals the clearance gap to the ground) ----
