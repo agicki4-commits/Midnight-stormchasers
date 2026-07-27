@@ -32,24 +32,28 @@
   //  wheels: draw the two code-drawn wheels
   const INTERCEPTORS = [
     { id:'dom1', name:'Dominator 1', owned:true,  price:0,    survive:'EF2',
-      sprite:'assets/dominator1.png', crouches:true, wheels:true,
-      note:'Reed-Timmer-style TIV. Low-slung armored hull. Hunkers onto its wheels.' },
+      sprite:'assets/dominator1.png', crouches:true, wheels:true, clearanceCm:5,
+      note:'Reed-Timmer-style TIV. 5 cm clearance — hunkers its body flat to the ground.' },
     { id:'dorothy', name:'Dorothy', owned:false, price:1000, survive:'EF3',
-      sprite:'assets/dorothy.png', armorSprite:'assets/dorothyArmor.png', crouches:false, wheels:false,
-      note:'Twister-style deployment pod. Slams its armor shell to the ground — the pod itself does not squat.' },
+      sprite:'assets/dorothy.png', armorSprite:'assets/dorothyArmor.png', crouches:true, wheels:false,
+      clearanceCm:10, armorCm:10,
+      note:'Twister-style pod. 10 cm clearance — lowers 5 cm and drops a 10 cm armor skirt that perfectly seals the gap to the ground.' },
     { id:'dom2', name:'Dominator 2', owned:false, price:2500, survive:'EF3',
-      sprite:'assets/dominator1.png', crouches:true, wheels:true,
+      sprite:'assets/dominator1.png', crouches:true, wheels:true, clearanceCm:5,
       note:'Reinforced chassis. Deeper stance.' },
     { id:'dom3', name:'Dominator 3', owned:false, price:4500, survive:'EF4',
-      sprite:'assets/dominator1.png', crouches:true, wheels:true,
+      sprite:'assets/dominator1.png', crouches:true, wheels:true, clearanceCm:5,
       note:'Aero flaps push it into the ground.' },
     { id:'tiv2', name:'TIV 2',       owned:false, price:9000, survive:'EF5',
-      sprite:'assets/dominator1.png', crouches:true, wheels:true,
+      sprite:'assets/dominator1.png', crouches:true, wheels:true, clearanceCm:5,
       note:'Hydraulic claws. Bulletproof glass.' },
     { id:'apex', name:'Apex Hunter', owned:false, price:20000,survive:'EF5+',
-      sprite:'assets/dominator1.png', crouches:true, wheels:true,
+      sprite:'assets/dominator1.png', crouches:true, wheels:true, clearanceCm:5,
       note:'Prototype. Magnetic ground lock.' },
   ];
+
+  // pixels-per-centimetre scale (visual). 5 cm -> 20 px lowering, etc.
+  const PX_PER_CM = 4;
 
   // ---- Economy / save state ----
   const SAVE_KEY = 'midnight_chasers_save_v1';
@@ -124,6 +128,7 @@
   let carX = -260;
   let carTargetX = W * 0.5;
   let crouch = 0;          // 0 = normal ride height, 1 = pressed to the ground
+  let armorDrop = 0;       // 0..1 Dorothy armor skirt descending
   let wheelSpin = 0;       // rotation of the wheels
   let cameraShake = 0;
   let tornadoWorldX = W + 400; // starts off right, approaches car
@@ -243,6 +248,7 @@
     carX = -260;
     carTilt = 0;
     crouch = 0;
+    armorDrop = 0;
     wheelSpin = 0;
     armorDeployed = false;
     cameraShake = 0;
@@ -331,8 +337,8 @@
     stateTime = 0;
     car.anchored = true;             // pinned to the ground
     if (runVeh.armorSprite) armorDeployed = true; // Dorothy drops its armor shell
-    const msg = runVeh.crouches ? 'Hunkered down — bracing for impact!'
-                                : 'Armor deployed — bracing for impact!';
+    const msg = runVeh.armorSprite ? 'Lowered & armor deployed — bracing for impact!'
+                                   : 'Hunkered down — bracing for impact!';
     document.getElementById('hudPhase').textContent = msg;
     prompt.classList.add('hidden');
   }
@@ -361,8 +367,8 @@
       if (carX >= carTargetX) {
         carX = carTargetX;
         state = S.WAIT;
-        const msg = runVeh.crouches ? 'In position. Press SPACE to hunker down!'
-                                    : 'In position. Press SPACE to deploy armor!';
+        const msg = runVeh.armorSprite ? 'In position. Press SPACE to lower & deploy armor!'
+                                       : 'In position. Press SPACE to hunker down!';
         document.getElementById('hudPhase').textContent = msg;
         prompt.classList.remove('hidden');
       }
@@ -375,9 +381,9 @@
     else if (state === S.ANCHORED) {
       stateTime += dt;
       carTilt = Math.max(0, carTilt - dt * 0.8);
-      // car presses down to the ground (crouch / squat on suspension)
-      // only crouching vehicles (Dominator) squat; Dorothy's pod stays put.
-      if (runVeh.crouches) crouch = Math.min(1, crouch + dt * 3);
+      // car presses down to the ground: BOTH Dominator and Dorothy lower 5 cm.
+      crouch = Math.min(1, crouch + dt * 3);
+      if (armorDeployed) armorDrop = Math.min(1, armorDrop + dt * 3);
 
       // tornado approaches the car
       const approachSpeed = 120 + storm._index * 22;
@@ -509,8 +515,8 @@
     if (survived) {
       title.textContent = 'SURVIVED';
       title.className = 'win';
-      const action = runVeh.crouches ? 'pressed down and held its ground'
-                                     : 'slammed its armor to the ground and held';
+      const action = runVeh.armorSprite ? 'lowered and sealed its armor skirt to the ground'
+                                        : 'pressed down and held its ground';
       text.innerHTML = `The ${nm} ${action} through the <b>${storm.name}</b> (${storm.wind} mph). Stronger storms pay more.`;
       // award coins — bigger storm = more coins
       const gain = stormReward(storm._index);
@@ -649,71 +655,107 @@
   function drawCar() {
     if (state===S.MENU||state===S.SELECT||state===S.SHOP) return;
 
-    // ride-height metrics
-    const RIDE = 55;          // normal center height above ground line
-    const CROUCH_DROP = 30;   // how much lower the body sits when hunkered down
     const cx = carX;
-    let cy = GROUND_Y - RIDE + crouch * CROUCH_DROP;
     let ang = -carTilt; // wheelie tilts nose up
     let flung = false;
 
+    // sprite draw size
+    const cw = 240, ch = 130;
+
+    // ---- clearance / lowering in centimetres -> pixels ----
+    // driving clearance (per vehicle); on deploy the body drops exactly 5 cm.
+    const driveClearCm = runVeh.clearanceCm || 5;
+    const loweredClearCm = Math.max(0, driveClearCm - 5 * crouch); // 5cm drop
+    const clearPx = loweredClearCm * PX_PER_CM;
+
+    // ground contact y (screen space). local origin will sit at ground.
+    let groundLocalY = GROUND_Y;
     if (!car.anchored && state!==S.WAIT && state!==S.APPROACH) {
-      cy = car.position.y;
+      // flung: follow physics body, sprite centre = car.position.y
+      groundLocalY = car.position.y + ch/2 + (driveClearCm*PX_PER_CM);
       ang = car.angle;
       flung = true;
     }
 
-    const cw = 240, ch = 130;
-    // wheel geometry (drawn in code — NOT a PNG)
-    const wheelR = 26;
-    const wheelDX = 74;                 // horizontal offset of each wheel from center
-    const axleY = ch/2 - 36;            // wheel axle height within the body space
-    // when crouched, suspension compresses: wheels stay on ground, body drops.
-    const bodyDY = crouch * CROUCH_DROP * -0.15; // tiny extra squat feel
-
-    // which sprite to draw: swap to armor shell for vehicles like Dorothy
-    const spritePath = (armorDeployed && runVeh.armorSprite) ? runVeh.armorSprite : runVeh.sprite;
-    const bodyImg = getImg(spritePath);
+    // which sprite to draw for the body
+    const bodyImg = getImg(runVeh.sprite);
+    const armorImg = runVeh.armorSprite ? getImg(runVeh.armorSprite) : null;
 
     ctx.save();
-    ctx.translate(cx, cy);
+    ctx.translate(cx, groundLocalY);  // local y = 0 is the ground line
     ctx.rotate(ang);
 
-    // ---- WHEELS (behind the body) — only vehicles that have them ----
+    // body rectangle in local space: bottom sits `clearPx` above ground
+    const bodyBottom = -clearPx;
+    const bodyTop = bodyBottom - ch;
+    const bodyLeft = -cw/2;
+
+    // visible body horizontal extent (sprite has transparent padding),
+    // used to clip wheels so they never stick out past the car.
+    const inset = cw * 0.13;
+    const clipLeft = bodyLeft + inset;
+    const clipRight = -bodyLeft - inset;
+
+    // ---- WHEELS (drawn in code, NOT a PNG) ----
+    // Small wheels that bridge body-to-ground; clipped to the car's footprint
+    // so nothing pokes out beyond or behind the body.
     if (runVeh.wheels) {
-      // wheels stay planted on the ground; when crouching the body drops onto them
-      const wheelY = flung ? axleY : (axleY - crouch * CROUCH_DROP);
+      const wheelR = Math.min(22, clearPx + 12);   // never bigger than the car
+      const wheelDX = cw * 0.24;                    // inside the body width
+      ctx.save();
+      // clip to the body footprint (horizontally within car, above ground)
+      ctx.beginPath();
+      ctx.rect(clipLeft, bodyTop + 8, clipRight - clipLeft, -(bodyTop + 8) + 2);
+      ctx.clip();
       for (const wx of [-wheelDX, wheelDX]) {
-        drawWheel(wx, wheelY, wheelR, wheelSpin);
+        drawWheel(wx, -wheelR, wheelR, wheelSpin);
+      }
+      ctx.restore();
+    }
+
+    // ---- DOROTHY ARMOR SKIRT (seals the clearance gap to the ground) ----
+    // A 10 cm skirt drops from the body bottom straight to the ground.
+    if (armorImg && armorDeployed) {
+      const skirtGap = (-bodyBottom);              // px from body bottom to ground
+      const drop = skirtGap * armorDrop;           // animate downward
+      // draw the armor sprite stretched to cover from body bottom to ground,
+      // so it perfectly closes the gap (armorCm = 10 -> full seal).
+      if (armorImg._ready) {
+        const skirtH = Math.max(1, drop + 4);
+        ctx.drawImage(armorImg, clipLeft, bodyBottom, clipRight - clipLeft, skirtH);
+      } else {
+        ctx.fillStyle = '#5a3a1a';
+        ctx.fillRect(clipLeft, bodyBottom, clipRight - clipLeft, drop);
       }
     }
 
     // ---- BODY (vehicle sprite) ----
     if (bodyImg && bodyImg._ready) {
-      ctx.drawImage(bodyImg, -cw/2, -ch/2 + bodyDY, cw, ch);
+      ctx.drawImage(bodyImg, bodyLeft, bodyTop, cw, ch);
     } else {
       ctx.fillStyle='#3a2422';
-      ctx.fillRect(-cw/2,-ch/2 + bodyDY,cw,ch);
+      ctx.fillRect(bodyLeft, bodyTop, cw, ch);
     }
     ctx.restore();
 
-    // ground press dust when hunkering down (crouching vehicles only)
-    if (runVeh.crouches && crouch > 0.05 && crouch < 1 && car.anchored) {
+    // ground press dust when lowering
+    if (crouch > 0.05 && crouch < 1 && car.anchored) {
       ctx.save();
       ctx.globalAlpha = 0.3 * (1 - crouch);
       ctx.fillStyle = '#b7a98a';
-      for (const wx of [-wheelDX, wheelDX]) {
+      for (let i=0;i<4;i++){
+        const dx = cx + (Math.random()-0.5)*180;
         ctx.beginPath();
-        ctx.arc(cx + wx, GROUND_Y - 4, 10 + crouch*14, 0, Math.PI*2);
+        ctx.arc(dx, GROUND_Y - 4, 8 + crouch*14, 0, Math.PI*2);
         ctx.fill();
       }
       ctx.restore();
     }
 
     // dust burst when Dorothy's armor slams down
-    if (!runVeh.crouches && armorDeployed && stateTime < 0.6 && car.anchored) {
+    if (armorDeployed && armorDrop < 1 && car.anchored) {
       ctx.save();
-      ctx.globalAlpha = 0.35 * (1 - stateTime/0.6);
+      ctx.globalAlpha = 0.35 * (1 - armorDrop);
       ctx.fillStyle = '#b7a98a';
       for (let i=0;i<8;i++){
         const dx = cx + (Math.random()-0.5)*220;
@@ -744,8 +786,8 @@
     ctx.fillStyle = '#141414';
     ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fill();
     // tread ring
-    ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.arc(0,0,r-3,0,Math.PI*2); ctx.stroke();
+    ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0,0,r-2,0,Math.PI*2); ctx.stroke();
     // rim
     ctx.rotate(spin);
     ctx.fillStyle = '#8a8f98';
@@ -753,7 +795,7 @@
     ctx.fillStyle = '#c9ccd6';
     ctx.beginPath(); ctx.arc(0,0,r*0.22,0,Math.PI*2); ctx.fill();
     // spokes
-    ctx.strokeStyle = '#5a5f68'; ctx.lineWidth = 3;
+    ctx.strokeStyle = '#5a5f68'; ctx.lineWidth = 2;
     for (let i=0;i<5;i++){
       const a = (i/5)*Math.PI*2;
       ctx.beginPath();
